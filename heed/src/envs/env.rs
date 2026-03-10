@@ -16,6 +16,7 @@ use super::{
     EnvInfo, FlagSetMode, IntegerComparator, OPENED_ENV,
 };
 use crate::cursor::{MoveOperation, RoCursor};
+use crate::envs::EnvStat;
 use crate::mdb::ffi::{self, MDB_env};
 use crate::mdb::lmdb_error::mdb_result;
 use crate::mdb::lmdb_flags::AllDatabaseFlags;
@@ -136,15 +137,47 @@ impl<T> Env<T> {
     pub fn info(&self) -> EnvInfo {
         let mut raw_info = mem::MaybeUninit::uninit();
         unsafe { ffi::mdb_env_info(self.inner.env_ptr.as_ptr(), raw_info.as_mut_ptr()) };
-        let raw_info = unsafe { raw_info.assume_init() };
+        let ffi::MDB_envinfo {
+            me_mapaddr,
+            me_mapsize,
+            me_last_pgno,
+            me_last_txnid,
+            me_maxreaders,
+            me_numreaders,
+        } = unsafe { raw_info.assume_init() };
 
         EnvInfo {
-            map_addr: raw_info.me_mapaddr,
-            map_size: raw_info.me_mapsize,
-            last_page_number: raw_info.me_last_pgno,
-            last_txn_id: raw_info.me_last_txnid,
-            maximum_number_of_readers: raw_info.me_maxreaders,
-            number_of_readers: raw_info.me_numreaders,
+            map_addr: me_mapaddr,
+            map_size: me_mapsize,
+            last_page_number: me_last_pgno,
+            last_txn_id: me_last_txnid,
+            maximum_number_of_readers: me_maxreaders,
+            number_of_readers: me_numreaders,
+        }
+    }
+
+    /// Returns some statistics about this environment.
+    pub fn stat(&self) -> EnvStat {
+        let mut raw_stat = mem::MaybeUninit::uninit();
+        unsafe { ffi::mdb_env_stat(self.inner.env_ptr.as_ptr(), raw_stat.as_mut_ptr()) };
+        // SAFETY: `mdb_env_stat` can only ever return EINVAL, and only if `env` or `stat` are null,
+        // which cannot be the case here as `raw_stat` is on the stack, and `env` is a `NonNull`.
+        let ffi::MDB_stat {
+            ms_psize,
+            ms_depth,
+            ms_branch_pages,
+            ms_leaf_pages,
+            ms_overflow_pages,
+            ms_entries,
+        } = unsafe { raw_stat.assume_init() };
+
+        EnvStat {
+            page_size: ms_psize,
+            depth: ms_depth,
+            branch_pages: ms_branch_pages,
+            leaf_pages: ms_leaf_pages,
+            overflow_pages: ms_overflow_pages,
+            entries: ms_entries,
         }
     }
 
@@ -195,7 +228,7 @@ impl<T> Env<T> {
     }
 
     /// Options and flags which can be used to configure how a [`Database`] is opened.
-    pub fn database_options(&self) -> DatabaseOpenOptions<T, Unspecified, Unspecified> {
+    pub fn database_options(&self) -> DatabaseOpenOptions<'_, '_, T, Unspecified, Unspecified> {
         DatabaseOpenOptions::new(self)
     }
 
@@ -331,7 +364,7 @@ impl<T> Env<T> {
     /// If another write transaction is initiated, while another write transaction exists
     /// the thread initiating the new one will wait on a mutex upon completion of the previous
     /// transaction.
-    pub fn write_txn(&self) -> Result<RwTxn> {
+    pub fn write_txn(&self) -> Result<RwTxn<'_>> {
         RwTxn::new(self)
     }
 
@@ -372,7 +405,7 @@ impl<T> Env<T> {
     ///   map must be resized
     /// * [`crate::MdbError::ReadersFull`]: a read-only transaction was requested, and the reader lock table is
     ///   full
-    pub fn read_txn(&self) -> Result<RoTxn<T>> {
+    pub fn read_txn(&self) -> Result<RoTxn<'_, T>> {
         RoTxn::new(self)
     }
 
@@ -594,7 +627,7 @@ impl<T> Env<T> {
     /// it is okay to call `mdb_env_set_mapsize` for an open environment as long as no transactions are active,
     /// but the library does not check for this condition, so the caller must ensure it explicitly.
     pub unsafe fn resize(&self, new_size: usize) -> Result<()> {
-        if new_size % page_size::get() != 0 {
+        if !new_size.is_multiple_of(page_size::get()) {
             let msg = format!(
                 "map size ({}) must be a multiple of the system page size ({})",
                 new_size,
@@ -865,7 +898,7 @@ mod tests {
             // We really need this env to be dropped before the read-only access.
             let env = unsafe {
                 EnvOpenOptions::new()
-                    .map_size(16 * 1024 * 1024 * 1024) // 10MB
+                    .map_size(10 * 1024 * 1024) // 10MB
                     .max_dbs(32)
                     .open(dir.path())
                     .unwrap()
@@ -885,7 +918,7 @@ mod tests {
             // Open now we do a read-only opening
             let env = unsafe {
                 EnvOpenOptions::new()
-                    .map_size(16 * 1024 * 1024 * 1024) // 10MB
+                    .map_size(10 * 1024 * 1024) // 10MB
                     .max_dbs(32)
                     .open(dir.path())
                     .unwrap()
@@ -915,7 +948,7 @@ mod tests {
             // Open now we do a read-only opening
             let env = unsafe {
                 EnvOpenOptions::new()
-                    .map_size(16 * 1024 * 1024 * 1024) // 10MB
+                    .map_size(10 * 1024 * 1024) // 10MB
                     .max_dbs(32)
                     .open(dir.path())
                     .unwrap()

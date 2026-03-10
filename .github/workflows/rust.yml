@@ -1,5 +1,6 @@
----
-on: [pull_request]
+on:
+  pull_request:
+  merge_group:
 
 name: Rust
 jobs:
@@ -197,6 +198,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          components: clippy
       - name: Run the examples
         run: |
           cargo clippy --all-targets -- --deny warnings

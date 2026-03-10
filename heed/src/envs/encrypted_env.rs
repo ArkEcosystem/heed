@@ -8,6 +8,7 @@ use aead::{AeadMutInPlace, Key, KeyInit, Nonce, Tag};
 
 use super::{Env, EnvClosingEvent, EnvInfo, FlagSetMode};
 use crate::databases::{EncryptedDatabase, EncryptedDatabaseOpenOptions};
+use crate::envs::EnvStat;
 use crate::mdb::ffi::{self};
 use crate::{CompactionOption, EnvFlags, Result, RoTxn, RwTxn, Unspecified, WithTls};
 #[allow(unused)] // fro cargo auto doc links
@@ -93,6 +94,11 @@ impl<T> EncryptedEnv<T> {
         self.inner.info()
     }
 
+    /// Returns some statistics about this environment.
+    pub fn stat(&self) -> EnvStat {
+        self.inner.stat()
+    }
+
     /// Returns the size used by all the databases in the environment without the free pages.
     ///
     /// It is crucial to configure [`EnvOpenOptions::max_dbs`] with a sufficiently large value
@@ -103,7 +109,9 @@ impl<T> EncryptedEnv<T> {
     }
 
     /// Options and flags which can be used to configure how a [`Database`] is opened.
-    pub fn database_options(&self) -> EncryptedDatabaseOpenOptions<T, Unspecified, Unspecified> {
+    pub fn database_options(
+        &self,
+    ) -> EncryptedDatabaseOpenOptions<'_, '_, T, Unspecified, Unspecified> {
         EncryptedDatabaseOpenOptions::new(self)
     }
 
@@ -174,7 +182,7 @@ impl<T> EncryptedEnv<T> {
     /// If another write transaction is initiated, while another write transaction exists
     /// the thread initiating the new one will wait on a mutex upon completion of the previous
     /// transaction.
-    pub fn write_txn(&self) -> Result<RwTxn> {
+    pub fn write_txn(&self) -> Result<RwTxn<'_>> {
         self.inner.write_txn()
     }
 
@@ -215,7 +223,7 @@ impl<T> EncryptedEnv<T> {
     ///   map must be resized
     /// * [`crate::MdbError::ReadersFull`]: a read-only transaction was requested, and the reader lock table is
     ///   full
-    pub fn read_txn(&self) -> Result<RoTxn<T>> {
+    pub fn read_txn(&self) -> Result<RoTxn<'_, T>> {
         self.inner.read_txn()
     }
 
